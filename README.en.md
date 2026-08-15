@@ -2,7 +2,7 @@
 
 <br/>
 
-<img src="assets/max-hermes.png" alt="MAX Hermes Plugin" width="300">
+<img src="assets/max-hermes.svg" alt="MAX Hermes Plugin" width="300">
 
 ### MAX — Russian messenger as a channel for Hermes Agent.
 
