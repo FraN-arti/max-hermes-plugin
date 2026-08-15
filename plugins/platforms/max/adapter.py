@@ -364,7 +364,10 @@ class MaxAdapter(BasePlatformAdapter):
 
     def _is_duplicate(self, msg_id: str) -> bool:
         now = time.time()
-        if len(self._seen_messages) > DEDUP_MAX_SIZE:
+        # Вычищаем записи старше окна дедупликации при каждом вызове —
+        # иначе старые ID навсегда останутся в памяти и будут ложно
+        # считаться дубликатами (особенно после перезапуска или долгой паузы).
+        if self._seen_messages:
             cutoff = now - DEDUP_WINDOW_SECONDS
             self._seen_messages = {k: v for k, v in self._seen_messages.items() if v > cutoff}
         if msg_id in self._seen_messages:
