@@ -1,7 +1,7 @@
 name: max-platform
 label: MAX (Russian Messenger)
 kind: platform
-version: 1.0.0
+version: 0.20.0
 description: >
   MAX messenger gateway adapter for Hermes Agent (Russia).
   Connects to MAX via Long Polling (GET /updates) and sends replies via

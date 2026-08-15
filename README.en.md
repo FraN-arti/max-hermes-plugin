@@ -10,7 +10,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/FraN-arti/max-hermes-plugin)
+[![Version](https://img.shields.io/badge/version-0.20.0-blue.svg)](https://github.com/FraN-arti/max-hermes-plugin)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![Hermes](https://img.shields.io/badge/Hermes-0.20+-7C3AED.svg)](https://hermes-agent.nousresearch.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
