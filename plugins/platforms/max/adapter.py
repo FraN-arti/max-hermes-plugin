@@ -153,6 +153,10 @@ class MaxAdapter(BasePlatformAdapter):
                 timeout=httpx.Timeout(connect=15.0, read=DEFAULT_POLL_TIMEOUT + 15, write=15.0, pool=15.0),
                 verify=self._ca_path or True,
             )
+            # Validate token and fetch bot info (GET /me)
+            await self._fetch_bot_info()
+            # Register bot command menu (PATCH /me/commands) — best effort
+            await self._register_commands()
             self._poll_task = asyncio.create_task(self._run_poll_loop())
             self._mark_connected()
             logger.info("[%s] Connected — Long Polling %s://%s/updates", self.name, API_SCHEME, API_HOST)
@@ -160,6 +164,57 @@ class MaxAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.error("[%s] Failed to connect: %s", self.name, e)
             return False
+
+    async def _fetch_bot_info(self) -> None:
+        """GET /me — validate the token and log bot identity."""
+        if self._http_client is None:
+            return
+        try:
+            resp = await self._http_client.get(
+                f"{API_SCHEME}://{API_HOST}/me",
+                headers={"Authorization": self._token},
+                timeout=15.0,
+            )
+            if resp.status_code == 401:
+                logger.error("[%s] Auth failed (401) — MAX_BOT_TOKEN invalid", self.name)
+                self._set_fatal_error(
+                    "max_unauthorized",
+                    "MAX API rejected auth (401). Check MAX_BOT_TOKEN.",
+                    retryable=False,
+                )
+                return
+            if resp.status_code < 300:
+                data = resp.json()
+                bot_name = data.get("first_name") or data.get("username") or "?"
+                bot_id = data.get("user_id")
+                logger.info("[%s] Authenticated as %s (id=%s)", self.name, bot_name, bot_id)
+        except Exception as e:
+            logger.warning("[%s] /me check failed: %s", self.name, e)
+
+    async def _register_commands(self) -> None:
+        """PATCH /me/commands — set the bot command menu (best effort)."""
+        if self._http_client is None:
+            return
+        commands = [
+            {"name": "help", "description": "Помощь и команды"},
+            {"name": "new", "description": "Новая сессия"},
+            {"name": "sethome", "description": "Установить этот чат домашним"},
+            {"name": "reset", "description": "Сбросить сессию"},
+        ]
+        try:
+            body = json.dumps({"commands": commands}).encode("utf-8")
+            resp = await self._http_client.patch(
+                f"{API_SCHEME}://{API_HOST}/me/commands",
+                content=body,
+                headers={"Authorization": self._token, "Content-Type": "application/json"},
+                timeout=15.0,
+            )
+            if resp.status_code < 300:
+                logger.info("[%s] Bot command menu registered (%d commands)", self.name, len(commands))
+            else:
+                logger.debug("[%s] /me/commands HTTP %d: %s", self.name, resp.status_code, resp.text[:150])
+        except Exception as e:
+            logger.debug("[%s] /me/commands failed: %s", self.name, e)
 
     async def _run_poll_loop(self) -> None:
         """Long Poll GET /updates with marker cursor and reconnect backoff."""
@@ -341,7 +396,9 @@ class MaxAdapter(BasePlatformAdapter):
             params["chat_id"] = chat_id
 
         text = content[:MAX_MESSAGE_LENGTH]
-        body = json.dumps({"text": text, "attachments": []}).encode("utf-8")
+        # MAX supports markdown formatting for bot messages
+        payload = {"text": text, "attachments": [], "format": "markdown"}
+        body = json.dumps(payload).encode("utf-8")
         try:
             resp = await self._http_client.post(
                 f"{API_SCHEME}://{API_HOST}/messages",
@@ -462,7 +519,7 @@ def register(ctx) -> None:
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",
         max_message_length=MAX_MESSAGE_LENGTH,
-        emoji="💬",
+        emoji="🟠",
         pii_safe=True,
         allow_update_command=True,
         platform_hint=(
