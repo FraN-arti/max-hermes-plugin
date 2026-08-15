@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a8a"/>
+      <stop offset="45%" style="stop-color:#6d28d9"/>
+      <stop offset="100%" style="stop-color:#db2777"/>
+    </linearGradient>
+    <linearGradient id="bubbleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#60a5fa"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#ec4899"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.25"/>
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Скруглённый квадрат (squircle) — фон -->
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bgGrad)"/>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#glow)"/>
+
+  <!-- Чат-пузырь (буква Q) -->
+  <path d="M 150 120
+           Q 256 88 330 120
+           Q 404 152 404 240
+           Q 404 328 330 360
+           Q 288 378 240 370
+           L 240 430
+           L 196 366
+           Q 150 340 128 300
+           Q 108 260 108 240
+           Q 108 152 150 120 Z"
+        fill="url(#bubbleGrad)"/>
+
+  <!-- Внутреннее отверстие (круг) -->
+  <circle cx="256" cy="240" r="62" fill="url(#bgGrad)"/>
+
+  <!-- Блик -->
+  <ellipse cx="210" cy="180" rx="70" ry="38" fill="#ffffff" opacity="0.18" transform="rotate(-25 210 180)"/>
+</svg>

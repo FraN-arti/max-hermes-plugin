@@ -2,7 +2,7 @@
 
 <br/>
 
-<img src="assets/max-hermes.svg" alt="MAX Hermes Plugin" width="300">
+<img src="assets/github-logo.jpg" alt="MAX Hermes Plugin" width="720">
 
 ### MAX — российский мессенджер как канал связи с Hermes Agent.
 
