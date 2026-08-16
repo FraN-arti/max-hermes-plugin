@@ -499,9 +499,10 @@ class MaxAdapter(BasePlatformAdapter):
     def _smart_truncate(self, content: str) -> str:
         """Truncate to MAX limit, cutting at a markdown-friendly boundary.
 
-        Legacy fallback: used only when a single chunk still exceeds the
-        limit (e.g. an unbreakable 5000-char word). Normal long messages are
-        split by ``_split_text`` instead.
+        If content exceeds MAX_MESSAGE_LENGTH, cut at the last newline or
+        space before the limit (so we don't split a code block / word) and
+        append a truncation notice. If there's no boundary (single long
+        word), cut hard and still append the notice.
         """
         if len(content) <= MAX_MESSAGE_LENGTH:
             return content
@@ -515,6 +516,66 @@ class MaxAdapter(BasePlatformAdapter):
             cut = cut[:boundary]
         return cut.rstrip() + _TRUNCATION_NOTICE
 
+    @staticmethod
+    def _guess_media_type(path: str) -> str:
+        """Guess MAX media type from file extension."""
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        if ext in ("jpg", "jpeg", "png", "gif", "webp", "bmp"):
+            return "image"
+        if ext in ("mp4", "mov", "avi", "mkv", "webm"):
+            return "video"
+        if ext in ("mp3", "ogg", "wav", "m4a", "flac"):
+            return "audio"
+        return "file"
+
+    async def _upload_media(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """Upload a file to MAX and return the attachment dict for /messages.
+
+        Flow: POST /uploads?type=X → get url+token → upload file to url →
+        attachment {"type": X, "payload": {"token": ...}}.
+        """
+        if self._http_client is None:
+            return None
+        media_type = self._guess_media_type(file_path)
+        try:
+            # 1. Get upload URL + token
+            resp = await self._http_client.post(
+                f"{API_SCHEME}://{API_HOST}/uploads",
+                params={"type": media_type},
+                headers={"Authorization": self._token},
+                timeout=15.0,
+            )
+            if resp.status_code >= 300:
+                logger.warning("[%s] /uploads HTTP %d: %s", self.name, resp.status_code, resp.text[:200])
+                return None
+            data = resp.json()
+            upload_url = data.get("url")
+            token = data.get("token")
+            if not upload_url or not token:
+                logger.warning("[%s] /uploads missing url/token", self.name)
+                return None
+
+            # 2. Upload the file (multipart field "data")
+            with open(file_path, "rb") as f:
+                files = {"data": (os.path.basename(file_path), f)}
+                up = await self._http_client.post(upload_url, files=files, timeout=30.0)
+            if up.status_code >= 300:
+                logger.warning("[%s] upload HTTP %d: %s", self.name, up.status_code, up.text[:200])
+                return None
+
+            # 3. Build attachment (image may return a photos map — keep if present)
+            payload: Dict[str, Any] = {"token": token}
+            try:
+                up_data = up.json()
+                if isinstance(up_data, dict) and up_data.get("photos"):
+                    payload["photos"] = up_data["photos"]
+            except Exception:
+                pass
+            return {"type": media_type, "payload": payload}
+        except Exception as e:
+            logger.error("[%s] Upload media failed: %s", self.name, e)
+            return None
+
     async def send(
         self,
         chat_id: str,
@@ -526,6 +587,9 @@ class MaxAdapter(BasePlatformAdapter):
 
         Long content (>4000 chars) is split into several sequential messages,
         respecting MAX's ~2 msg/sec limit via ``_rate_limit_send``.
+
+        Attachments: if metadata carries ``media_files`` (list of paths),
+        they are uploaded via POST /uploads and attached to the first chunk.
         """
         if self._http_client is None:
             return SendResult(success=False, error="HTTP client not initialized")
@@ -540,11 +604,26 @@ class MaxAdapter(BasePlatformAdapter):
         else:
             params["chat_id"] = chat_id
 
+        # Upload attachments (if any)
+        attachments: List[Dict[str, Any]] = []
+        media_files = metadata.get("media_files") or []
+        for fp in media_files:
+            att = await self._upload_media(str(fp))
+            if att:
+                attachments.append(att)
+            else:
+                logger.warning("[%s] Could not upload attachment: %s", self.name, fp)
+
         chunks = self._split_text(content)
         last: SendResult = SendResult(success=False, error="no chunks")
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             # MAX supports markdown formatting for bot messages
-            payload = {"text": chunk, "attachments": [], "format": "markdown"}
+            # Attachments go with the first chunk only
+            payload = {
+                "text": chunk,
+                "attachments": attachments if i == 0 else [],
+                "format": "markdown",
+            }
             body = json.dumps(payload).encode("utf-8")
             try:
                 await self._rate_limit_send(str(chat_id))
@@ -662,11 +741,44 @@ async def _standalone_send(
     token = extra.get("token") or _get_scoped_secret("MAX_BOT_TOKEN", "")
     if not token:
         return {"error": "max standalone send: MAX_BOT_TOKEN not configured"}
-    if media_files:
-        logger.warning("[max] standalone send: media_files are not supported yet, sending text only")
     ca_path = _default_ca_path()
     text = (message or "")[:MAX_MESSAGE_LENGTH]
-    body = json.dumps({"text": text, "attachments": []}).encode("utf-8")
+
+    # Upload attachments (if any)
+    attachments: List[Dict[str, Any]] = []
+    for fp in (media_files or []):
+        try:
+            media_type = MaxAdapter._guess_media_type(str(fp))
+            async with httpx.AsyncClient(verify=ca_path or True, timeout=15.0) as client:
+                # 1. Get upload URL
+                r = await client.post(
+                    f"{API_SCHEME}://{API_HOST}/uploads",
+                    params={"type": media_type},
+                    headers={"Authorization": token},
+                )
+                data = r.json()
+                # 2. Upload file
+                if r.status_code < 300 and data.get("url"):
+                    with open(str(fp), "rb") as f:
+                        up = await client.post(
+                            data["url"],
+                            files={"data": (os.path.basename(str(fp)), f)},
+                            timeout=30.0,
+                        )
+                    if up.status_code < 300:
+                        payload: Dict[str, Any] = {"token": data.get("token", "")}
+                        try:
+                            up_data = up.json()
+                            if isinstance(up_data, dict) and up_data.get("photos"):
+                                payload["photos"] = up_data["photos"]
+                        except Exception:
+                            pass
+                        attachments.append({"type": media_type, "payload": payload})
+        except Exception as e:
+            logger.warning("[max] standalone upload %s failed: %s", fp, e)
+
+    payload = {"text": text, "attachments": attachments, "format": "markdown"}
+    body = json.dumps(payload).encode("utf-8")
     params: Dict[str, Any] = {}
     extra2 = getattr(pconfig, "extra", {}) or {}
     user_id = extra2.get("user_id") or os.getenv("MAX_HOME_USER_ID", "").strip()
