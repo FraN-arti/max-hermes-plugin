@@ -64,6 +64,76 @@ _ECHO_MARKER = "hermes-agent-max"  # appended to outgoing text for echo-loop pre
 CA_DOWNLOAD_TIMEOUT = 10  # seconds
 MAX_SEND_RATE_PER_CHAT = 2.0  # MAX: max 2 messages/sec per chat
 _TRUNCATION_NOTICE = "\n\n✂️ (сообщение обрезано — лимит MAX 4000 симв.)"
+_MEDIA_LABELS = {"image": "Фото", "video": "Видео", "audio": "Аудио", "file": "Файл", "voice": "Голосовое"}
+
+
+def _find_media_url(obj: Any, depth: int = 0) -> Optional[str]:
+    """Recursively find a media download URL in a MAX update.
+
+    MAX can nest voice/audio URLs deep inside the update object
+    (message.attachments[].payload.url, message.voice, body.attachments,
+    or at the update root). This mirrors what clients actually receive
+    without pulling in any external library.
+    """
+    if depth > 8 or obj is None:
+        return None
+    if isinstance(obj, dict):
+        # type + url at the same level (typical attachment shape)
+        atype = str(obj.get("type", "")).lower()
+        url = obj.get("url") or obj.get("download_url") or ""
+        if atype in ("voice", "audio", "video") and isinstance(url, str) and url.startswith("http"):
+            return url
+        # payload.url pattern
+        payload = obj.get("payload")
+        if isinstance(payload, dict):
+            url = payload.get("url") or payload.get("download_url") or ""
+            if isinstance(url, str) and url.startswith("http"):
+                return url
+        # recurse into known containers
+        for key in ("attachments", "voice", "audio", "message", "body", "payload", "media"):
+            found = _find_media_url(obj.get(key), depth + 1)
+            if found:
+                return found
+        for val in obj.values():
+            found = _find_media_url(val, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            found = _find_media_url(item, depth + 1)
+            if found:
+                return found
+    return None
+
+_MIME_BY_EXT = {
+    ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword", ".odt": "application/vnd.oasis.opendocument.text",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel", ".csv": "text/csv", ".txt": "text/plain", ".md": "text/markdown",
+    ".rtf": "application/rtf", ".epub": "application/epub+zip", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".ppt": "application/vnd.ms-powerpoint", ".json": "application/json", ".xml": "application/xml",
+    ".zip": "application/zip", ".rar": "application/vnd.rar", ".7z": "application/x-7z-compressed",
+    ".tar": "application/x-tar", ".gz": "application/gzip", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+    ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".flac": "audio/flac", ".opus": "audio/opus",
+    ".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+    ".webm": "video/webm", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml",
+    ".html": "text/html", ".htm": "text/html", ".log": "text/plain", ".py": "text/x-python",
+}
+
+
+def _mime_for_ext(ext: str, fallback_type: str = "file") -> str:
+    """Map a file extension to a MIME type (lowercased, with dot).
+
+    Falls back to a type-appropriate default when the extension is unknown.
+    """
+    e = ext.lower() if ext else ""
+    if e in _MIME_BY_EXT:
+        return _MIME_BY_EXT[e]
+    return {
+        "video": "video/mp4", "audio": "audio/mpeg", "file": "application/octet-stream",
+        "image": "image/jpeg",
+    }.get(fallback_type, "application/octet-stream")
 
 
 def _get_scoped_secret(name, default=None):
@@ -366,6 +436,75 @@ class MaxAdapter(BasePlatformAdapter):
 
     # -- Inbound message processing -----------------------------------------
 
+    async def _download_url(self, url: str, ext: str = ".bin") -> str:
+        """Download an attachment URL to the local cache dir.
+
+        Uses an SSRF-safe client with the system trust store so hosts that
+        chain to a different root (e.g. fd.oneme.ru) verify fine — the
+        adapter's main client is pinned to the Минцифры CA.
+        """
+        # Preferred: SSRF-safe, system trust store (covers fd.oneme.ru etc.)
+        try:
+            from tools.url_safety import create_ssrf_safe_async_client
+
+            async with create_ssrf_safe_async_client(
+                timeout=30.0, follow_redirects=True
+            ) as client:
+                resp = await client.get(url)
+                if resp.status_code >= 300:
+                    raise RuntimeError(f"HTTP {resp.status_code} downloading {url[:60]}")
+                return self._save_to_cache(resp.content, ext)
+        except Exception as e:
+            logger.debug("[%s] SSRF-safe download failed (%s), falling back to pinned CA client", self.name, e)
+
+        # Fallback: main client (pinned to Минцифры CA)
+        if self._http_client is None:
+            raise RuntimeError("HTTP client not initialized")
+        resp = await self._http_client.get(url, timeout=30.0)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"HTTP {resp.status_code} downloading {url[:60]}")
+        return self._save_to_cache(resp.content, ext)
+
+    def _save_to_cache(self, data: bytes, ext: str) -> str:
+        """Persist raw attachment bytes under HERMES_HOME/cache/attachments.
+
+        Sniffs audio magic bytes so an MP3/OGG/WAV delivered as ``.bin`` (MAX
+        file-type attachments don't always carry a filename) is still saved
+        with its real container extension and is picked up by the STT path.
+        """
+        if not ext or ext == ".bin":
+            try:
+                from tools.audio_container import sniff_audio_ext
+                ext = sniff_audio_ext(data, ".bin")
+            except Exception:
+                pass
+        cache_dir = os.path.join(
+            os.getenv("HERMES_HOME", "") or os.path.expanduser("~/.hermes"),
+            "cache", "attachments",
+        )
+        os.makedirs(cache_dir, exist_ok=True)
+        fname = f"att_{uuid.uuid4().hex[:12]}{ext}"
+        path = os.path.join(cache_dir, fname)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    async def _download_attachment(self, token: str, media_type: str) -> Optional[str]:
+        """Resolve an attachment token to a downloadable URL and fetch it.
+
+        MAX attachment payloads carry ``token`` but not always a direct URL.
+        This uses the public download endpoint for a token-based fetch.
+        """
+        try:
+            url = f"{API_SCHEME}://{API_HOST}/attachments/{token}"
+            ext = {
+                "image": ".jpg", "video": ".mp4", "audio": ".mp3", "file": ".bin",
+            }.get(media_type, ".bin")
+            return await self._download_url(url, ext)
+        except Exception as e:
+            logger.warning("[%s] Token-based download failed: %s", self.name, e)
+            return None
+
     async def _handle_update(self, upd: Dict[str, Any]) -> None:
         """Process a single Update object from MAX."""
         update_type = upd.get("update_type") or upd.get("event") or "unknown"
@@ -413,6 +552,42 @@ class MaxAdapter(BasePlatformAdapter):
                 elif t == "image":
                     media_kind = "[Фото]"
                     attachments_desc += f" {media_kind}"
+                    # Image without direct URL — try token-based download if payload has token
+                    token = payload.get("token") if isinstance(payload, dict) else None
+                    if token:
+                        local_path = await self._download_attachment(token, "image")
+                        if local_path:
+                            media_urls.append(local_path)
+                            media_types.append("image/jpeg")
+                elif t in ("video", "audio", "file") and url:
+                    # Try to download non-image attachments too
+                    try:
+                        # Prefer the real filename from payload (gives the right
+                        # extension: .pdf/.docx/.mp4/... instead of a generic .bin)
+                        fname = payload.get("filename") if isinstance(payload, dict) else None
+                        ext = ""
+                        if fname:
+                            ext = os.path.splitext(str(fname))[1].lower()
+                        if not ext:
+                            ext = os.path.splitext(url.split("?")[0])[1] or {
+                                "video": ".mp4", "audio": ".mp3", "file": ".bin",
+                            }.get(t, ".bin")
+                        local_path = await self._download_url(url, ext)
+                        media_urls.append(local_path)
+                        mime = _mime_for_ext(ext, t)
+                        # If the real extension (from filename or magic-byte
+                        # sniff) is audio but the attachment type was 'file',
+                        # upgrade the MIME so the STT pipeline kicks in.
+                        if t == "file" and os.path.splitext(local_path)[1].lower() in (
+                            ".mp3", ".ogg", ".wav", ".m4a", ".flac", ".opus", ".aac", ".oga",
+                        ):
+                            mime = _mime_for_ext(os.path.splitext(local_path)[1].lower(), "audio")
+                        media_types.append(mime)
+                        attachments_desc += f" [{_MEDIA_LABELS.get(t, t)}]"
+                        logger.info("[%s] Downloaded inbound %s to %s", self.name, t, local_path)
+                    except Exception as e:
+                        logger.warning("[%s] Failed to download %s %s: %s", self.name, t, url[:60], e)
+                        attachments_desc += f" [{_MEDIA_LABELS.get(t, t)} (не удалось скачать)]"
                 elif t == "video":
                     attachments_desc += " [Видео]"
                 elif t == "audio":
@@ -424,7 +599,25 @@ class MaxAdapter(BasePlatformAdapter):
         if not text and attachments_desc:
             text = attachments_desc
         if not text and not media_urls:
-            return
+            # Voice messages may arrive as a sparse update (no message body).
+            # Try a recursive URL search before giving up.
+            voice_url = _find_media_url(upd)
+            if voice_url:
+                try:
+                    ext = os.path.splitext(voice_url.split("?")[0])[1] or ".ogg"
+                    local_path = await self._download_url(voice_url, ext)
+                    media_urls.append(local_path)
+                    media_types.append(_mime_for_ext(ext, "audio"))
+                    attachments_desc = " [Голосовое]"
+                    text = attachments_desc
+                    logger.info("[%s] Downloaded inbound voice to %s", self.name, local_path)
+                except Exception as e:
+                    logger.warning("[%s] Failed to download voice %s: %s", self.name, voice_url[:60], e)
+                    return
+            else:
+                # Log the raw update so we can see what MAX actually sent
+                logger.info("[%s] Empty inbound — RAW update (full): %s", self.name, json.dumps(upd, ensure_ascii=False))
+                return
 
         # Echo-loop prevention
         if _ECHO_MARKER in text:
