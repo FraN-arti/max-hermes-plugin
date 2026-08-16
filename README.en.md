@@ -154,6 +154,11 @@ plugins/platforms/max/
 
 [MIT](LICENSE)
 
+<br/>
+
+> ⭐ **Like this plugin?** Give it a star — it helps the project grow!
+> Questions and ideas — in [Issues](https://github.com/FraN-arti/max-hermes-plugin/issues).
+
 ---
 
 <div align="center">

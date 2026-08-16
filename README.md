@@ -156,6 +156,11 @@ plugins/platforms/max/
 
 [MIT](LICENSE)
 
+<br/>
+
+> ⭐ **Понравился плагин?** Поставь звёздочку — это помогает проекту расти!
+> Вопросы и идеи — в [Issues](https://github.com/FraN-arti/max-hermes-plugin/issues).
+
 ---
 
 <div align="center">
