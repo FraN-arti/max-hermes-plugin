@@ -145,7 +145,8 @@ plugins/platforms/max/
 
 - MAX recommends **webhooks** for production, but they require HTTPS + public URL.
   Long Polling works everywhere (even behind NAT) — ideal for personal use.
-- **Attachments** (images, files) are not sent yet — text only. Planned.
+- **Voice messages (hold-to-talk)** are not delivered via Long Polling (empty update) —
+  webhook required ([#6](https://github.com/FraN-arti/max-hermes-plugin/issues/6)). Regular audio files (MP3) work.
 - Messages over 4000 chars are **split into multiple** (smart split at line/word boundaries).
 
 <br/>
