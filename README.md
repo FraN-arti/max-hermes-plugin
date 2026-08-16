@@ -106,10 +106,14 @@ hermes gateway restart
 
 - **Приём:** Long Polling `GET /updates` с marker-курсором. Комп сам опрашивает
   MAX-серверы — внешний доступ к нему не нужен.
+- **Маркер персистится** в `max/marker.json` — после перезапуска gateway старые
+  сообщения не обрабатываются повторно.
 - **Отправка:** `POST /messages` c `user_id` (личка) или `chat_id` (группы/каналы).
+  Rate limit MAX (2 сообщ./сек на чат) соблюдается автоматически.
+- **«Печатает…»:** индикатор набора через `POST /chats/{id}/actions` (`typing_on`).
 - **TLS:** MAX использует Russian Trusted Root CA (Минцифры). Плагин сам скачивает
   его с официального источника [gu-st.ru](https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt)
-  при первом запуске, либо берёт путь из `MAX_CA_CERT_PATH`.
+  при первом запуске (с таймаутом 10с и проверкой PEM), либо берёт путь из `MAX_CA_CERT_PATH`.
 
 <br/>
 
@@ -131,9 +135,10 @@ hermes gateway restart
 ```
 plugins/platforms/max/
 ├── __init__.py      # регистрация плагина
-├── adapter.py       # Long Polling + отправка + авто-сертификат
+├── adapter.py       # Long Polling + отправка + авто-сертификат + typing
 ├── plugin.yaml      # метаданные для hermes setup gateway
-└── README.md        # этот файл
+├── README.md        # этот файл (RU)
+└── README.en.md     # English version
 ```
 
 <br/>
@@ -142,8 +147,8 @@ plugins/platforms/max/
 
 - MAX рекомендует **webhook** для production, но он требует HTTPS + публичный URL.
   Long Polling работает везде (даже за NAT) — для личного использования идеально.
-- Индикатор «Печатает...» в официальном Bot API MAX не документирован.
-- Сообщения > 4000 символов обрезаются.
+- **Вложения** (картинки, файлы) пока не отправляются — только текст. В планах.
+- Сообщения > 4000 символов **разбиваются на несколько** (умный сплит по границам строк/слов).
 
 <br/>
 

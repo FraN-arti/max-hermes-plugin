@@ -106,10 +106,13 @@ Done! Message the bot in MAX — it will answer. 🎉
 
 - **Inbound:** Long Polling `GET /updates` with marker cursor. Your machine polls
   MAX servers — no inbound access needed.
+- **Marker is persisted** to `max/marker.json` — no update replay after gateway restart.
 - **Outbound:** `POST /messages` with `user_id` (DM) or `chat_id` (groups/channels).
+  MAX rate limit (2 msg/sec per chat) is respected automatically.
+- **Typing indicator:** via `POST /chats/{id}/actions` (`typing_on`).
 - **TLS:** MAX uses Russian Trusted Root CA. The plugin auto-downloads it from the
   official source [gu-st.ru](https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt)
-  on first run, or uses `MAX_CA_CERT_PATH`.
+  on first run (10s timeout, PEM validation), or uses `MAX_CA_CERT_PATH`.
 
 <br/>
 
@@ -142,8 +145,8 @@ plugins/platforms/max/
 
 - MAX recommends **webhooks** for production, but they require HTTPS + public URL.
   Long Polling works everywhere (even behind NAT) — ideal for personal use.
-- Typing indicator is not documented in the official MAX Bot API.
-- Messages over 4000 chars are truncated.
+- **Attachments** (images, files) are not sent yet — text only. Planned.
+- Messages over 4000 chars are **split into multiple** (smart split at line/word boundaries).
 
 <br/>
 
