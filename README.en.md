@@ -150,6 +150,17 @@ plugins/platforms/max/
 
 <br/>
 
+## Roadmap
+
+- 🔜 **Group chats & @mentions** ([#2](https://github.com/FraN-arti/max-hermes-plugin/issues/2)) — v1.1
+- 🔜 **Webhook mode** for production ([#3](https://github.com/FraN-arti/max-hermes-plugin/issues/3)) — once a domain is available
+- 🔜 **CI: automated tests & linter** ([#4](https://github.com/FraN-arti/max-hermes-plugin/issues/4))
+- ✅ **Attachments** ([#1](https://github.com/FraN-arti/max-hermes-plugin/issues/1)) — done!
+
+Full list — in [Issues](https://github.com/FraN-arti/max-hermes-plugin/issues).
+
+<br/>
+
 ## License
 
 [MIT](LICENSE)

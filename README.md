@@ -152,6 +152,17 @@ plugins/platforms/max/
 
 <br/>
 
+## Дорожная карта (Roadmap)
+
+- 🔜 **Групповые чаты и @упоминания** ([#2](https://github.com/FraN-arti/max-hermes-plugin/issues/2)) — v1.1
+- 🔜 **Webhook-режим** для production ([#3](https://github.com/FraN-arti/max-hermes-plugin/issues/3)) — когда будет домен
+- 🔜 **CI: автотесты и линтер** ([#4](https://github.com/FraN-arti/max-hermes-plugin/issues/4))
+- ✅ **Вложения** ([#1](https://github.com/FraN-arti/max-hermes-plugin/issues/1)) — сделано!
+
+Полный список — в [Issues](https://github.com/FraN-arti/max-hermes-plugin/issues).
+
+<br/>
+
 ## Лицензия
 
 [MIT](LICENSE)
