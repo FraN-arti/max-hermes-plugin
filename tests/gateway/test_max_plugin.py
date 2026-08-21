@@ -985,7 +985,7 @@ class TestStandaloneSend:
 
     def test_standalone_send_no_token(self):
         cfg = PlatformConfig(enabled=True, extra={})
-        with patch("plugins.platforms.max.adapter.os.getenv", return_value=""):
+        with patch.object(_max, "_get_scoped_secret", return_value=""):
             result = _run(_standalone_send(cfg, "1", "hi"))
         assert "error" in result
 
