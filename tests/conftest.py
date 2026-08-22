@@ -25,12 +25,28 @@ Two supported contexts:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]          # repo root
 _PLUGIN_DIR = _REPO_ROOT / "plugins" / "platforms" / "max"
+
+
+@pytest.fixture(autouse=True)
+def _clean_max_env(monkeypatch):
+    """Isolate every test from the developer's live MAX_* environment.
+
+    Importing ``gateway.*`` loads ``$HERMES_HOME/.env`` via python-dotenv,
+    so real credentials (MAX_BOT_TOKEN, MAX_OWNER_USER_ID, …) leak into
+    ``os.environ`` even under ``env -u``. Each test starts from a clean
+    MAX_* slate; tests that need a value set it explicitly.
+    """
+    for name in [n for n in os.environ if n.startswith("MAX_")]:
+        monkeypatch.delenv(name, raising=False)
 
 
 def _real_loader_available() -> bool:
@@ -79,3 +95,32 @@ def _install_standalone_loader() -> None:
 
 if not _real_loader_available():
     _install_standalone_loader()
+
+
+def _ensure_platform_enum_knows_max() -> None:
+    """Standalone-only: make ``Platform("max")`` resolvable for lone-file runs.
+
+    Upstream CI resolves it via the bundled scan (``plugins/platforms/max``
+    exists in the hermes-agent tree). When the plugin lives in THIS repo
+    against an *installed* Hermes, nothing triggers user-plugin discovery,
+    so prime the enum through the registry once at collection time.
+    """
+    try:
+        from gateway.config import Platform
+
+        Platform("max")
+        return
+    except ValueError:
+        pass
+    try:
+        from hermes_cli.plugins import discover_plugins
+
+        discover_plugins()
+        from gateway.config import Platform
+
+        Platform("max")
+    except Exception:
+        pass
+
+
+_ensure_platform_enum_knows_max()
